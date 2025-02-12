@@ -25,6 +25,17 @@ options = [
     #"v",  # a flagpole, do not generate
     #"m"  # mario's start position, do not generate
 ]
+weights = [
+    2,
+    2,
+    0.5,
+    0.3,
+    3,
+    3,
+    1,
+    0.5,
+    1
+]
 
 # The level as a grid of tiles
 
@@ -64,30 +75,67 @@ class Individual_Grid(object):
 
     # Mutate a genome into a new genome.  Note that this is a _genome_, not an individual!
     def mutate(self, genome):
-        # STUDENT implement a mutation operator, also consider not mutating this individual
-        # STUDENT also consider weighting the different tile types so it's not uniformly random
-        # STUDENT consider putting more constraints on this to prevent pipes in the air, etc
-
         left = 1
         right = width - 1
-        for y in range(height):
-            for x in range(left, right):
-                pass
+        for y in range(height - 1):  # Ensure y doesn't exceed height - 1
+            for x in range(left, right-3):
+                if random.random() > 0.9:
+                    print("REPLACING BLOCK")
+                    randomchoice = random.choices(options, weights=weights)[0]
+
+                    if randomchoice in ('|', 'T'):
+                        if y == height - 1 or genome[y + 1][x] in ('X', '|'):
+                            genome[y][x] = randomchoice
+
+                    elif randomchoice in ('?', 'M'):
+                        if y not in (height - 1, height - 2):  # Prevent out-of-bounds access for y+2
+                            if genome[y + 1][x] == '-' and genome[y + 2][x] == '-':
+                                genome[y][x] = randomchoice
+
+                    else:
+                        genome[y][x] = randomchoice
         return genome
 
-    # Create zero or more children from self and other
     def generate_children(self, other):
         new_genome = copy.deepcopy(self.genome)
-        # Leaving first and last columns alone...
-        # do crossover with other
         left = 1
         right = width - 1
-        for y in range(height):
+
+        self.calculate_fitness()
+        other.calculate_fitness()
+        selffitness = self._fitness
+        otherfitness = other._fitness
+        selfprob = selffitness / (selffitness + otherfitness)
+
+        for y in range(height - 1):  # Ensure y doesn't exceed height - 1
             for x in range(left, right):
-                # STUDENT Which one should you take?  Self, or other?  Why?
-                # STUDENT consider putting more constraints on this to prevent pipes in the air, etc
-                pass
-        # do mutation; note we're returning a one-element tuple here
+                if random.random() < selfprob:
+                    if self.genome[y][x] in ('|', 'T'):
+                        if y == height - 1 or new_genome[y + 1][x] in ('X', '|'):
+                            new_genome[y][x] = self.genome[y][x]
+
+                    elif self.genome[y][x] in ('?', 'M'):
+                        if y not in (height - 1, height - 2):  # Prevent y+2 out-of-bounds
+                            if new_genome[y + 1][x] == '-' and new_genome[y + 2][x] == '-':
+                                new_genome[y][x] = self.genome[y][x]
+
+                    else:
+                        new_genome[y][x] = self.genome[y][x]
+
+                else:
+                    if other.genome[y][x] in ('|', 'T'):
+                        if y == height - 1 or new_genome[y + 1][x] in ('X', '|'):
+                            new_genome[y][x] = other.genome[y][x]
+
+                    elif other.genome[y][x] in ('?', 'M'):
+                        if y not in (height - 1, height - 2):  # Prevent y+2 out-of-bounds
+                            if new_genome[y + 1][x] == '-' and new_genome[y + 2][x] == '-':
+                                new_genome[y][x] = other.genome[y][x]
+
+                    else:
+                        new_genome[y][x] = other.genome[y][x]
+
+        new_genome = self.mutate(new_genome)
         return (Individual_Grid(new_genome),)
 
     # Turn the genome into a level string (easy for this genome)
@@ -101,11 +149,11 @@ class Individual_Grid(object):
         g = [["-" for col in range(width)] for row in range(height)]
         g[15][:] = ["X"] * width
         g[14][0] = "m"
-        g[7][-1] = "v"
+        g[7][-2] = "v"
         for col in range(8, 14):
-            g[col][-1] = "f"
+            g[col][-2] = "f"
         for col in range(14, 16):
-            g[col][-1] = "X"
+            g[col][-2] = "X"
         return cls(g)
 
     @classmethod
@@ -115,9 +163,9 @@ class Individual_Grid(object):
         g = [random.choices(options, k=width) for row in range(height)]
         g[15][:] = ["X"] * width
         g[14][0] = "m"
-        g[7][-1] = "v"
-        g[8:14][-1] = ["f"] * 6
-        g[14:16][-1] = ["X", "X"]
+        g[7][-2] = "v"
+        g[8:14][-2] = ["f"] * 6
+        g[14:16][-2] = ["X"]
         return cls(g)
 
 
@@ -163,7 +211,7 @@ class Individual_DE(object):
             pathPercentage=0.5,
             emptyPercentage=0.6,
             linearity=-0.5,
-            solvability=2.0
+            solvability=10.0
         )
         penalties = 0
         # STUDENT For example, too many stairs are unaesthetic.  Let's penalize that
@@ -340,14 +388,46 @@ class Individual_DE(object):
         return Individual_DE(g)
 
 
-Individual = Individual_Grid
+Individual = Individual_DE
 
 
-def generate_successors(population):
+def tournament_selection(population, k=3):
+    tournament = random.sample(population, k)  # Randomly pick `k` individuals
+    return max(tournament, key=lambda ind: ind.fitness())  # Pick the best among them
+
+def generate_successors(population, elite_size=2, tournament_size=3):
     results = []
-    # STUDENT Design and implement this
-    # Hint: Call generate_children() on some individuals and fill up results.
-    return results
+    
+    if not population:
+        print("Error: Population is empty!")
+        return results
+
+    # Sort population by fitness (descending order)
+    sorted_population = sorted(population, key=lambda ind: ind.fitness(), reverse=True)
+    print(sorted_population)
+
+    # **1. ELITIST SELECTION:** Keep top `elite_size` individuals
+    results.extend(sorted_population[:elite_size])
+
+    # **2. TOURNAMENT SELECTION:** Generate remaining offspring
+    num_offspring_needed = len(population) - elite_size
+
+    while len(results) < len(population):
+        # Select two parents using tournament selection
+        parent1 = tournament_selection(population, k=tournament_size)
+        parent2 = tournament_selection(population, k=tournament_size)
+
+        # Generate children (assuming generate_children function exists)
+        children = parent1.generate_children(parent2)  # Returns a tuple with one child
+        child1 = children[0]  # Extract the first child
+
+        results.append(child1)
+
+        if len(results) < len(population):  # Ensure we don't exceed the population size
+            results.append(child1)
+
+    return results[:len(population)]  # Trim to maintain population size
+
 
 
 def ga():
@@ -361,8 +441,7 @@ def ga():
     with mpool.Pool(processes=os.cpu_count()) as pool:
         init_time = time.time()
         # STUDENT (Optional) change population initialization
-        population = [Individual.random_individual() if random.random() < 0.9
-                      else Individual.empty_individual()
+        population = [Individual.empty_individual()
                       for _g in range(pop_limit)]
         # But leave this line alone; we have to reassign to population because we get a new population that has more cached stuff in it.
         population = pool.map(Individual.calculate_fitness,

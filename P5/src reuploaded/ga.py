@@ -156,17 +156,20 @@ class Individual_Grid(object):
             g[col][-2] = "X"
         return cls(g)
 
-    @classmethod
-    def random_individual(cls):
-        # STUDENT consider putting more constraints on this to prevent pipes in the air, etc
-        # STUDENT also consider weighting the different tile types so it's not uniformly random
-        g = [random.choices(options, k=width) for row in range(height)]
-        g[15][:] = ["X"] * width
-        g[14][0] = "m"
-        g[7][-2] = "v"
-        g[8:14][-2] = ["f"] * 6
-        g[14:16][-2] = ["X"]
-        return cls(g)
+@classmethod
+def random_individual(cls):
+    # STUDENT consider putting more constraints on this to prevent pipes in the air, etc
+    # STUDENT also consider weighting the different tile types so it's not uniformly random
+    g = [random.choices(options, k=width) for row in range(height)]
+    g[15][:] = ["X"] * width
+    g[14][0] = "m"
+    g[7][-2] = "v"
+    g[8:14][-2] = ["f"] * 6
+    g[14:16][-2] = ["X"]
+    return cls(g)
+
+
+
 
 
 def offset_by_upto(val, variance, min=None, max=None):
@@ -214,12 +217,54 @@ class Individual_DE(object):
             solvability=10.0
         )
         penalties = 0
+
+        #summing for the base score 
+        base_score = sum(coefficients[m] * measurements[m] for m in coefficients)
+
+        level_grid = self.to_level()
+        enemies_count = 0
+        pipes_count = 0
+        blocks_count = 0
+        coins_count = 0
+        stairs_count = 0
+
+
+
         # STUDENT For example, too many stairs are unaesthetic.  Let's penalize that
-        if len(list(filter(lambda de: de[1] == "6_stairs", self.genome))) > 5:
-            penalties -= 2
+        #if len(list(filter(lambda de: de[1] == "6_stairs", self.genome))) > 5:
+           # penalties -= 2
         # STUDENT If you go for the FI-2POP extra credit, you can put constraint calculation in here too and cache it in a new entry in __slots__.
-        self._fitness = sum(map(lambda m: coefficients[m] * measurements[m],
-                                coefficients)) + penalties
+        #self._fitness = sum(map(lambda m: coefficients[m] * measurements[m],
+         #                       coefficients)) + penalties
+        for row in level_grid:
+            enemies_count += row.count("E")
+            pipes_count += (row.count("|") + row.count("T"))
+            blocks_count += (row.count("B") + row.count("?") + row.count("M"))
+            coins_count += row.count("o")
+            stairs_count += row.count("S")
+        
+        #here for the penalities to look for what to duduct on to penalize too much (coins an exception)
+        if enemies_count < 5:
+            base_score -=(5 - enemies_count)*0.5
+        elif enemies_count > 20:
+            base_score -= (enemies_count - 20)*0.5
+        
+        base_score += min(coins_count, 20)*0.1
+
+        if blocks_count > 30:
+            base_score -= (blocks_count - 30)*0.2
+        if pipes_count > 10:
+            base_score -= (pipes_count - 10)*0.5
+        if stairs_count > 0:
+            base_score -= (stairs_count // 5) #every 5 minus 1
+
+        # for FI-2POP checking for solvable or unsolvable
+        if(measurements["solvability"]) == 1:
+            base_score +=5
+        else:
+            base_score -= 10
+        
+        self._fitness = base_score
         return self
 
     def fitness(self):
@@ -237,6 +282,7 @@ class Individual_DE(object):
             x = de[0]
             de_type = de[1]
             choice = random.random()
+
             if de_type == "4_block":
                 y = de[2]
                 breakable = de[3]
@@ -246,6 +292,11 @@ class Individual_DE(object):
                     y = offset_by_upto(y, height / 2, min=0, max=height - 1)
                 else:
                     breakable = not de[3]
+                
+                #no blocks at row 0
+                if y == 0:
+                    y = 1
+
                 new_de = (x, de_type, y, breakable)
             elif de_type == "5_qblock":
                 y = de[2]
@@ -256,6 +307,10 @@ class Individual_DE(object):
                     y = offset_by_upto(y, height / 2, min=0, max=height - 1)
                 else:
                     has_powerup = not de[3]
+
+                #y too high, if so, then lower to be within (might have to fix more if beyond too much)
+                if(y > height - 2):
+                    y = height - 2
                 new_de = (x, de_type, y, has_powerup)
             elif de_type == "3_coin":
                 y = de[2]
@@ -263,6 +318,10 @@ class Individual_DE(object):
                     x = offset_by_upto(x, width / 8, min=1, max=width - 2)
                 else:
                     y = offset_by_upto(y, height / 2, min=0, max=height - 1)
+                
+                #not allowing coins on too high
+                if y == height - 1:
+                    y = height - 2
                 new_de = (x, de_type, y)
             elif de_type == "7_pipe":
                 h = de[2]
@@ -270,13 +329,25 @@ class Individual_DE(object):
                     x = offset_by_upto(x, width / 8, min=1, max=width - 2)
                 else:
                     h = offset_by_upto(h, 2, min=2, max=height - 4)
+                #height must be of size, otherwise reduce it to be
+                if h>(height - 4):
+                    h = height - 4
                 new_de = (x, de_type, h)
+
+
+
             elif de_type == "0_hole":
                 w = de[2]
                 if choice < 0.5:
                     x = offset_by_upto(x, width / 8, min=1, max=width - 2)
                 else:
                     w = offset_by_upto(w, 4, min=1, max=width - 2)
+
+                #if extends beyond right edge, reduce w
+                if(x+w >= width - 1):
+                    w = (width-2)-x
+                    if(w < 1):
+                        w = 1 #width always 1 or more
                 new_de = (x, de_type, w)
             elif de_type == "6_stairs":
                 h = de[2]
@@ -287,6 +358,9 @@ class Individual_DE(object):
                     h = offset_by_upto(h, 8, min=1, max=height - 4)
                 else:
                     dx = -dx
+                #height must be above zero, otherwise, we change it
+                if h<1:
+                    h = 1
                 new_de = (x, de_type, h, dx)
             elif de_type == "1_platform":
                 w = de[2]
@@ -300,6 +374,13 @@ class Individual_DE(object):
                     y = offset_by_upto(y, height, min=0, max=height - 1)
                 else:
                     madeof = random.choice(["?", "X", "B"])
+                
+                #making sure within bounds
+                if(x+w >= width - 1):
+                    w = (width - 2)-x
+                    if w<1:
+                        w = 1
+
                 new_de = (x, de_type, w, y, madeof)
             elif de_type == "2_enemy":
                 pass
